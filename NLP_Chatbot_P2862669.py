@@ -434,7 +434,7 @@ class EncoderRNN(nn.Module):
         return outputs, hidden
 
 
-# In[ ]:
+# In[11]:
 
 
 # CNN Model
@@ -449,18 +449,14 @@ class CNNChatbot(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
-        # Embed the input and ensure proper shape
-        x = self.embedding(x.long())  # (batch_size, seq_len, embedding_dim)
-        x = x.unsqueeze(1)  # Add channel dimension: (batch_size, 1, seq_len, embedding_dim)
-        
-        # Apply convolutional layers and pooling
-        conved = [nn.functional.relu(conv(x)).squeeze(3) for conv in self.convs]
+        x = x.float()  # Ensure input is float
+        embedded = self.embedding(x.long()).unsqueeze(1)  # (batch_size, 1, seq_len, embedding_dim)
+        conved = [nn.functional.relu(conv(embedded)).squeeze(3) for conv in self.convs]
         pooled = [nn.functional.max_pool1d(conv, conv.size(2)).squeeze(2) for conv in conved]
-        
-        # Concatenate pooled features and pass through fully connected layer
         cat = self.dropout(torch.cat(pooled, dim=1))  # (batch_size, num_filters * len(kernel_sizes))
-        output = self.fc(cat)  # (batch_size, output_dim)
-        return output
+        output = self.fc(cat)  # (batch_size, vocab_size)
+        return output.unsqueeze(1).expand(-1, x.size(1), -1)  # Ensure (batch_size, seq_len, vocab_size)
+
 
 # MLP Model
 class MLPChatbot(nn.Module):
@@ -477,9 +473,6 @@ class MLPChatbot(nn.Module):
         x = self.dropout(x)
         output = self.fc2(x)
         return output.unsqueeze(1).expand(-1, 10, -1)  # Ensure (batch_size, seq_len, vocab_size)
-
-
-
 
 
 
@@ -727,7 +720,7 @@ def trainIters(model_name, voc, pairs, encoder, decoder, encoder_optimizer, deco
             json.dump({'training_losses': training_losses, 'validation_losses': validation_losses}, f)
 
 
-# In[34]:
+# In[17]:
 
 
 def train_cnn_mlp_model(model, data_loader, criterion, optimizer, epochs=5):
@@ -735,47 +728,43 @@ def train_cnn_mlp_model(model, data_loader, criterion, optimizer, epochs=5):
     all_losses = []
     for epoch in range(epochs):
         total_loss = 0
-        for batch_idx, (inputs, targets) in enumerate(data_loader):
-            # Send data to device (GPU or CPU)
+        for inputs, targets in data_loader:
             inputs, targets = inputs.to(device), targets.to(device)
 
-            # Debugging: Print shapes of inputs and targets
-            print(f"Epoch {epoch + 1}, Batch {batch_idx + 1}:")
-            print(f"Inputs shape: {inputs.shape}, Targets shape: {targets.shape}")
-
             # Forward pass
-            try:
-                outputs = model(inputs)  # Model output
-                # Debugging: Print output shape
-                print(f"Model Outputs shape: {outputs.shape}")
-                
-                # Flatten outputs and targets for loss calculation
-                outputs = outputs.reshape(-1, outputs.size(-1))
-                targets = targets.reshape(-1)
-                
-                # Debugging: Print reshaped output and target shapes
-                print(f"Flattened Outputs shape: {outputs.shape}, Flattened Targets shape: {targets.shape}")
+            outputs = model(inputs)  # Model output: (batch_size, seq_len, vocab_size)
+            outputs = outputs.reshape(-1, outputs.size(-1))  # Flatten outputs
+            targets = targets.reshape(-1)  # Flatten targets
 
-                # Calculate loss
-                loss = criterion(outputs, targets)
+            # Calculate loss
+            loss = criterion(outputs, targets)
 
-                # Backward pass
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+            # Backward pass
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
-                total_loss += loss.item()
-            except Exception as e:
-                print(f"Error in batch {batch_idx + 1}: {e}")
-                return all_losses  # Return losses collected so far for debugging
-
+            total_loss += loss.item()
         avg_loss = total_loss / len(data_loader)
         all_losses.append(avg_loss)
-        print(f"Epoch {epoch + 1}/{epochs}, Average Loss: {avg_loss:.4f}")
+        print(f"Epoch {epoch + 1}/{epochs}, Loss: {avg_loss:.4f}")
     return all_losses
 
 
-# In[35]:
+# In[18]:
+
+
+def prepare_sample_data(vocab_size, seq_len, num_samples=1000):
+    """
+    Generate random sample data for demonstration purposes.
+    """
+    inputs = torch.randint(0, vocab_size, (num_samples, seq_len))  # Random input sequences
+    targets = torch.randint(0, vocab_size, (num_samples, seq_len))  # Random target sequences
+    dataset = TensorDataset(inputs, targets)
+    return DataLoader(dataset, batch_size=16, shuffle=True)
+
+
+# In[19]:
 
 
 class GreedySearchDecoder(nn.Module):
@@ -809,7 +798,7 @@ class GreedySearchDecoder(nn.Module):
         return all_tokens, all_scores
 
 
-# In[36]:
+# In[20]:
 
 
 # Rule-based fallback responses
@@ -826,7 +815,7 @@ def get_rule_based_response(user_input):
     return rule_based_responses.get(user_input.lower(), None)
 
 
-# In[37]:
+# In[21]:
 
 
 def evaluate(encoder, decoder, searcher, voc, sentence, max_length=MAX_LENGTH):
@@ -874,7 +863,7 @@ def evaluateInput(encoder, decoder, searcher, voc):
             print("Error: Encountered unknown word.")
 
 
-# In[38]:
+# In[22]:
 
 
 def evaluate_cnn_mlp_model(model, data_loader):
@@ -896,7 +885,7 @@ def evaluate_cnn_mlp_model(model, data_loader):
     return avg_bleu
 
 
-# In[39]:
+# In[23]:
 
 
 def plot_metrics(metrics, title, ylabel):
@@ -912,7 +901,7 @@ def plot_metrics(metrics, title, ylabel):
     
 
 
-# In[40]:
+# In[24]:
 
 
 def calculate_bleu(reference, candidate):
@@ -926,7 +915,7 @@ def calculate_bleu(reference, candidate):
     return sentence_bleu(reference, candidate, smoothing_function=smooth_fn)
 
 
-# In[41]:
+# In[25]:
 
 
 # Load model if a ``loadFilename`` is provided
@@ -960,7 +949,7 @@ decoder = decoder.to(device)
 print('Models built and ready to go!')
 
 
-# In[25]:
+# In[26]:
 
 
 # Ensure dropout layers are in train mode
@@ -993,21 +982,24 @@ trainIters(model_name, voc, pairs, encoder, decoder, encoder_optimizer, decoder_
            print_every, save_every, clip, corpus_name, loadFilename, training_losses, validation_losses)
 
 
-# In[ ]:
+# In[27]:
 
 
-def train_and_evaluate_cnn_mlp(train_loader, val_loader, vocab_size, seq_len, embedding_dim, hidden_dim, output_dim, kernel_sizes, num_filters, dropout, epochs=5):
+def train_and_evaluate_cnn_mlp(vocab_size, seq_len, embedding_dim, hidden_dim, output_dim, kernel_sizes, num_filters, dropout, epochs=5):
+    
+    data_loader = prepare_sample_data(vocab_size, seq_len)
+
     # CNN Model
     cnn_model = CNNChatbot(vocab_size, embedding_dim, output_dim, kernel_sizes, num_filters, dropout).to(device)
     cnn_optimizer = optim.Adam(cnn_model.parameters(), lr=0.001)
     cnn_criterion = nn.CrossEntropyLoss()
     
     print("Training CNN Model...")
-    cnn_losses = train_cnn_mlp_model(cnn_model, train_loader, cnn_criterion, cnn_optimizer, epochs)
+    cnn_losses = train_cnn_mlp_model(cnn_model, data_loader, cnn_criterion, cnn_optimizer, epochs)
     plot_metrics(cnn_losses, "CNN Training Loss", "Loss")
     
     print("Evaluating CNN Model on Validation Data...")
-    cnn_bleu = evaluate_cnn_mlp_model(cnn_model, val_loader)
+    cnn_bleu = evaluate_cnn_mlp_model(cnn_model, data_loader)
     print(f"CNN BLEU Score: {cnn_bleu:.4f}")
 
     # MLP Model
@@ -1022,20 +1014,18 @@ def train_and_evaluate_cnn_mlp(train_loader, val_loader, vocab_size, seq_len, em
     mlp_optimizer = optim.Adam(mlp_model.parameters(), lr=0.001)
     mlp_criterion = nn.CrossEntropyLoss()
     print("Training MLP Model...")
-    mlp_losses = train_cnn_mlp_model(mlp_model, train_loader, mlp_criterion, mlp_optimizer, epochs)
+    mlp_losses = train_cnn_mlp_model(mlp_model, data_loader, mlp_criterion, mlp_optimizer, epochs)
     plot_metrics(mlp_losses, "MLP Training Loss", "Loss")
     print("Evaluating MLP Model on Validation Data...")
-    mlp_bleu = evaluate_cnn_mlp_model(mlp_model, val_loader)
+    mlp_bleu = evaluate_cnn_mlp_model(mlp_model, data_loader)
     print(f"MLP BLEU Score: {mlp_bleu:.4f}")
 
 
-# In[43]:
+# In[28]:
 
 
 print("Starting Training for CNN and MLP!")
 train_and_evaluate_cnn_mlp(
-    train_loader=train_loader,
-    val_loader=val_loader,
     vocab_size=voc.num_words,
     seq_len=MAX_LENGTH,
     embedding_dim=hidden_size,  # Reuse RNN hidden size as embedding_dim
@@ -1044,18 +1034,18 @@ train_and_evaluate_cnn_mlp(
     kernel_sizes=[2, 3, 4],     # CNN-specific parameter
     num_filters=16,             # CNN-specific parameter
     dropout=dropout,
-    epochs=5  # Same training duration
+    epochs=n_iteration  # Same training duration
 )
 
 
-# In[ ]:
+# In[29]:
 
 
 # Plot loss curves
 plot_metrics(training_losses, 'Loss Curve', 'Loss')
 
 
-# In[ ]:
+# In[30]:
 
 
 # Set dropout layers to ``eval`` mode
